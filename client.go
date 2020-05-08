@@ -52,9 +52,13 @@ const (
 
 type PinMode string
 
+func (m PinMode) Ptr() *PinMode {
+	return &m
+}
+
 const (
-	PinModeInput     PinMode = "I"
-	PinModeOutput    PinMode = "O"
+	PinModeInput  PinMode = "I"
+	PinModeOutput PinMode = "O"
 )
 
 type PinState string
@@ -147,7 +151,7 @@ func (g *GPIOClient) Input(pin uint8) (PinState, error) {
 	}
 }
 
-func (g *GPIOClient) Setup(pin uint8, mode PinMode, opts ...SetupOpt) error {
+func (g *GPIOClient) Setup(pin uint8, opts ...SetupOpt) error {
 	if err := g.validatePin(pin); err != nil {
 		return err
 	}
@@ -156,9 +160,6 @@ func (g *GPIOClient) Setup(pin uint8, mode PinMode, opts ...SetupOpt) error {
 		opt(setupOpts)
 	}
 
-	if err := g.write(g.pinch(pin) + string(mode)); err != nil {
-		return err
-	}
 	if setupOpts.pull != nil {
 		if err := g.write(g.pinch(pin) + string(*setupOpts.pull)); err != nil {
 			return err
@@ -177,9 +178,9 @@ func (g *GPIOClient) Setup(pin uint8, mode PinMode, opts ...SetupOpt) error {
 func (g *GPIOClient) Close() {
 	for bm0, bm1 := range pinMap {
 		if g.boardMode == 0 {
-			g.Setup(bm0, PinModeOutput, Pull(PullNone), InitialState(PinStateLow))
+			g.Setup(bm0, InitialPinMode(PinModeOutput), Pull(PullNone), InitialState(PinStateLow))
 		} else {
-			g.Setup(bm1, PinModeOutput, Pull(PullNone), InitialState(PinStateLow))
+			g.Setup(bm1, InitialPinMode(PinModeOutput), Pull(PullNone), InitialState(PinStateLow))
 		}
 	}
 }
@@ -215,6 +216,7 @@ func (g *GPIOClient) validatePin(pin uint8) error {
 type setupOpts struct {
 	pull         *PullMode
 	initialState *PinState
+	pinMode      *PinMode
 }
 
 type SetupOpt func(opts *setupOpts)
@@ -228,6 +230,12 @@ func Pull(mode PullMode) SetupOpt {
 func InitialState(state PinState) SetupOpt {
 	return func(opts *setupOpts) {
 		opts.initialState = state.Ptr()
+	}
+}
+
+func InitialPinMode(mode PinMode) SetupOpt {
+	return func(opts *setupOpts) {
+		opts.pinMode = mode.Ptr()
 	}
 }
 

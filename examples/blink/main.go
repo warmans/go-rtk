@@ -21,7 +21,7 @@ func main() {
 	client := rtk.NewGPIOClient(port)
 	defer client.Close()
 
-	if err := client.Setup(pin, rtk.PinModeOutput, rtk.Pull(rtk.PullDown), rtk.InitialState(rtk.PinStateHigh)); err != nil {
+	if err := client.Setup(pin, rtk.InitialPinMode(rtk.PinModeOutput), rtk.Pull(rtk.PullDown), rtk.InitialState(rtk.PinStateHigh)); err != nil {
 		log.Fatalf("setup failed %v", err)
 	}
 
