@@ -159,7 +159,11 @@ func (g *GPIOClient) Setup(pin uint8, opts ...SetupOpt) error {
 	for _, opt := range opts {
 		opt(setupOpts)
 	}
-
+	if setupOpts.pinMode != nil {
+		if err := g.write(g.pinch(pin) + string(*setupOpts.pinMode)); err != nil {
+			return err
+		}
+	}
 	if setupOpts.pull != nil {
 		if err := g.write(g.pinch(pin) + string(*setupOpts.pull)); err != nil {
 			return err
