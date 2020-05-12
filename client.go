@@ -2,9 +2,11 @@ package rtk
 
 import (
 	"fmt"
-	"github.com/jacobsa/go-serial/serial"
 	"io"
+	"sync"
 	"time"
+
+	"github.com/jacobsa/go-serial/serial"
 )
 
 var pinMap = map[uint8]uint8{
@@ -80,6 +82,7 @@ func NewGPIOClient(port io.ReadWriteCloser) *GPIOClient {
 type GPIOClient struct {
 	port      io.ReadWriteCloser
 	boardMode uint8
+	lock      sync.Mutex
 }
 
 func (g *GPIOClient) SetMode(mode uint8) error {
@@ -91,45 +94,52 @@ func (g *GPIOClient) SetMode(mode uint8) error {
 }
 
 func (g *GPIOClient) Output(pin uint8, state PinState) error {
-	if err := g.validatePin(pin); err != nil {
-		return err
-	}
-	if err := g.write(g.pinch(pin)); err != nil {
-		return err
-	}
-	if err := g.write(string(state)); err != nil {
-		return err
-	}
-	return nil
+	return g.locked(func() error {
+		if err := g.validatePin(pin); err != nil {
+			return err
+		}
+		if err := g.write(g.pinch(pin)); err != nil {
+			return err
+		}
+		if err := g.write(string(state)); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 func (g *GPIOClient) Input(pin uint8) (PinState, error) {
 	if err := g.validatePin(pin); err != nil {
 		return "", err
 	}
-	if err := g.write(g.pinch(pin) + "?"); err != nil {
-		return "", err
-	}
 	payload := []byte{}
-
-	// max payload is 4 bytes
-	for len(payload) < 4 {
-		buff := make([]byte, 1)
-		read, err := g.port.Read(buff)
-		if err != nil {
-			return "", err
+	err := g.locked(func() error {
+		if err := g.write(g.pinch(pin) + "?"); err != nil {
+			return err
 		}
-		if read == 1 {
-			// this doesn't seem to make sense. In the python library it will retry if there
-			// are less than 4 bytes. I'm not sure why the newline would terminate a message at fewer
-			// than 4 bytes just to discard it later.
-			if string(buff[0]) == "\n" {
-				break
+		// max payload is 4 bytes
+		for len(payload) < 4 {
+			buff := make([]byte, 1)
+			read, err := g.port.Read(buff)
+			if err != nil {
+				return err
 			}
-			payload = append(payload, buff...)
-		} else {
-			time.Sleep(time.Millisecond)
+			if read == 1 {
+				// this doesn't seem to make sense. In the python library it will retry if there
+				// are less than 4 bytes. I'm not sure why the newline would terminate a message at fewer
+				// than 4 bytes just to discard it later.
+				if string(buff[0]) == "\n" {
+					break
+				}
+				payload = append(payload, buff...)
+			} else {
+				time.Sleep(time.Millisecond)
+			}
 		}
+		return nil
+	})
+	if err != nil {
+		return "", err
 	}
 
 	// should have a max 4 byte payload.
@@ -159,22 +169,27 @@ func (g *GPIOClient) Setup(pin uint8, opts ...SetupOpt) error {
 	for _, opt := range opts {
 		opt(setupOpts)
 	}
-	if setupOpts.pinMode != nil {
-		if err := g.write(g.pinch(pin) + string(*setupOpts.pinMode)); err != nil {
-			return err
+	return g.locked(func() error {
+		if setupOpts.pinMode != nil {
+			if err := g.write(g.pinch(pin) + string(*setupOpts.pinMode)); err != nil {
+				return err
+			}
 		}
-	}
-	if setupOpts.pull != nil {
-		if err := g.write(g.pinch(pin) + string(*setupOpts.pull)); err != nil {
-			return err
+		if setupOpts.pull != nil {
+			if err := g.write(g.pinch(pin) + string(*setupOpts.pull)); err != nil {
+				return err
+			}
 		}
-	}
-	if setupOpts.initialState != nil {
-		if err := g.Output(pin, *setupOpts.initialState); err != nil {
-			return err
+		if setupOpts.initialState != nil {
+			if err := g.write(g.pinch(pin)); err != nil {
+				return err
+			}
+			if err := g.write(string(*setupOpts.initialState)); err != nil {
+				return err
+			}
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // Not sure what close is supposed to do. In the real client id seems to do nothing.
@@ -199,6 +214,12 @@ func (g *GPIOClient) pinch(pin uint8) string {
 func (g *GPIOClient) write(data string) error {
 	_, err := g.port.Write([]byte(data))
 	return err
+}
+
+func (g *GPIOClient) locked(fn func() error) error {
+	g.lock.Lock()
+	defer g.lock.Unlock()
+	return fn()
 }
 
 func (g *GPIOClient) validatePin(pin uint8) error {
